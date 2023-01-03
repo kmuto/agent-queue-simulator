@@ -44,6 +44,10 @@ end
       metric = {name: "M#{progress_minutes}", started: @attime, retry: 0}
       queue.push(metric)
     end
+    if queue.size > config['buffersize']
+      log(pastel.magenta.bold('@ reached queue limit'))
+    end
+
 
     nextmode = if queue.size > 0
       :queued
