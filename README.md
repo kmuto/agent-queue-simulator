@@ -22,7 +22,7 @@ Copyright 2023 Kenshi Muto
 ## 実行
 
 ```
-bundle exec queue-simulation.rb
+bundle exec ruby queue-simulation.rb
 ```
 
 見方は以下のとおりです。
