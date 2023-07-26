@@ -35,6 +35,8 @@ def log(message)
   puts "#{@attime} #{message}"
 end
 
+losts = []
+
 0.upto(running_minutes) do |progress_minutes|
   @attime = (starttime + progress_minutes * 60).strftime('%H:%M')
   # 30秒ずつの表現
@@ -46,8 +48,11 @@ end
     end
     if queue.size > config['buffersize']
       log(pastel.magenta.bold('@ reached queue limit'))
+      # あきらめはこれでいい？
+      q = queue.shift  # 最初を取る
+      log(pastel.red.bold("@ limit lost #{q}"))
+      losts.push(q)
     end
-
 
     nextmode = if queue.size > 0
       :queued
@@ -91,7 +96,8 @@ end
         q1.each do |metric|
           metric[:retry] += 1
           if metric[:retry] > config['max_retry']
-            log(pastel.red.bold("@ lost #{metric}"))
+            log(pastel.red.bold("@ retry lost #{metric}"))
+            losts.push(metric)
             next
           end
           queue.push(metric)
@@ -103,6 +109,10 @@ end
 if queue.size > 0
   log(pastel.red.bold("@ #{queue.size} posts remained"))
   queue.sort {|a, b| a[:started] <=> b[:started] }.each do |metric|
-    log(pastel.red.bold("@ remain #{metric}"))
+    log(pastel.blue("@ remain #{metric}"))
   end
+end
+
+losts.sort {|a, b| a[:started] <=> b[:started] }.each do |metric|
+    log(pastel.red.bold("@ finally lost #{metric}"))
 end
