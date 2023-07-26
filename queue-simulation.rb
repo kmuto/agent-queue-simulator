@@ -102,4 +102,7 @@ end
 end
 if queue.size > 0
   log(pastel.red.bold("@ #{queue.size} posts remained"))
+  queue.sort {|a, b| a[:started] <=> b[:started] }.each do |metric|
+    log(pastel.red.bold("@ remain #{metric}"))
+  end
 end
