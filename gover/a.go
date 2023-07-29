@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"time"
 )
@@ -16,12 +17,19 @@ const (
 )
 
 type postValue struct {
-	values   []string
+	values   []int64
 	retryCnt int
 }
 
-func newPostValue(values []string) *postValue {
+func newPostValue(values []int64) *postValue {
 	return &postValue{values, 0}
+}
+
+func postHostMetricValuesWithRetry(postValues []int64, inDown bool) error {
+	if inDown {
+		return errors.New("IN DOWN")
+	}
+	return nil
 }
 
 // 障害時間配列を作る。30秒ごとにダウンタイムのときはtrueにする
@@ -35,8 +43,8 @@ func makeDownTimeMap() map[int64]bool {
 	return downTimeMap
 }
 
-func postMetric(queue chan<- string, tick int64) {
-	queue <- fmt.Sprintf("%v", time.Unix(tick, 0))
+func log(t int64, message string) {
+	fmt.Println(fmt.Sprintf("%v", time.Unix(t, 0)), ": ", message)
 }
 
 // 30秒単位での時間を黙々と返す
@@ -55,6 +63,8 @@ func main() {
 	to := time.Date(2023, 7, 28, 11, 0, 0, 0, time.Local)
 	ticksCh := make(chan int64)
 	downTimeMap := makeDownTimeMap()
+	inDown := false
+	nowTime := int64(0)
 
 	postQueue := make(chan *postValue, 3)
 	termCh := make(chan struct{})
@@ -65,12 +75,16 @@ func main() {
 	for {
 		select {
 		case t := <-ticksCh:
+			nowTime = t
 			if downTimeMap[t] {
-				fmt.Printf("!DOWN %v\n", time.Unix(t, 0))
+				// fmt.Printf("!DOWN %v\n", time.Unix(t, 0))
+				inDown = true
+			} else {
+				inDown = false
 			}
 			if t%60 == 0 {
-				creatingValues := []string{fmt.Sprintf("%v", time.Unix(t, 0))}
-				postQueue <- newPostValue(creatingValues)
+				creatingValues := []int64{t}
+				postQueue <- newPostValue(creatingValues) // これは障害だろうがやる
 			}
 		case v := <-postQueue:
 			origPostValues := [](*postValue){v}
@@ -89,7 +103,18 @@ func main() {
 				}
 			}
 
-			fmt.Println("POSTED at ", v)
+			var postValues []int64
+			for _, v := range origPostValues {
+				postValues = append(postValues, v.values...)
+			}
+			err := postHostMetricValuesWithRetry(postValues, inDown)
+			if err != nil {
+				if lState != loopStateTerminating {
+					lState = loopStateHadError
+				}
+			}
+
+			log(nowTime, fmt.Sprintf("%v", v))
 		case <-termCh:
 			fmt.Println("EXIT")
 			return
