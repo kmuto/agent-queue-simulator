@@ -56,22 +56,39 @@ func main() {
 	ticksCh := make(chan int64)
 	downTimeMap := makeDownTimeMap()
 
-	queue := make(chan string, 3)
+	postQueue := make(chan *postValue, 3)
 	termCh := make(chan struct{})
 
 	go ticks(ticksCh, from, to, termCh)
+	lState := loopStateFirst
 
 	for {
 		select {
 		case t := <-ticksCh:
 			if downTimeMap[t] {
-				fmt.Print("! ")
+				fmt.Printf("!DOWN %v\n", time.Unix(t, 0))
 			}
 			if t%60 == 0 {
-				queue <- fmt.Sprintf("%v", time.Unix(t, 0))
+				creatingValues := []string{fmt.Sprintf("%v", time.Unix(t, 0))}
+				postQueue <- newPostValue(creatingValues)
 			}
-			fmt.Println(t)
-		case v := <-queue:
+		case v := <-postQueue:
+			origPostValues := [](*postValue){v}
+			if len(postQueue) > 0 {
+				fmt.Println("BULK")
+				nextValues := <-postQueue
+				origPostValues = append(origPostValues, nextValues)
+			}
+			// delay
+
+			if lState != loopStateTerminating {
+				if len(postQueue) > 0 {
+					lState = loopStateQueued
+				} else {
+					lState = loopStateDefault
+				}
+			}
+
 			fmt.Println("POSTED at ", v)
 		case <-termCh:
 			fmt.Println("EXIT")
