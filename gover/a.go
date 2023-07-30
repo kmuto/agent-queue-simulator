@@ -1,9 +1,12 @@
 package main
 
 import (
+	"crypto/sha1"
 	"errors"
 	"fmt"
 	"time"
+
+	strftime "github.com/itchyny/timefmt-go"
 )
 
 type loopState uint8
@@ -45,10 +48,10 @@ func makeDownTimeMap() map[int64]bool {
 
 func log(t int64, status string, postValue *postValue, len int) {
 	if postValue == nil {
-		fmt.Println(fmt.Sprintf("%v", time.Unix(t, 0)), ":", status, ":", len)
+		fmt.Println(strftime.Format(time.Unix(t, 0), "%H:%M:%S"), ",", status, ", QLEN", len)
 	} else {
-		message := fmt.Sprintf("%v (%d)", time.Unix(postValue.values[0], 0), postValue.retryCnt)
-		fmt.Println(fmt.Sprintf("%v", time.Unix(t, 0)), ":", status, ":", message, ":", len)
+		message := fmt.Sprintf("%s (RETRY %d)", strftime.Format(time.Unix(postValue.values[0], 0), "%H:%M"), postValue.retryCnt)
+		fmt.Println(strftime.Format(time.Unix(t, 0), "%H:%M:%S"), ",", status, ",", message, ": QLEN", len)
 	}
 }
 
@@ -58,10 +61,19 @@ func ticks(ticksChan chan<- int64, from time.Time, to time.Time, termCh chan<- s
 	to_t := to.Unix()
 	for t := from_t; t < to_t; t += 60 {
 		ticksChan <- t
+		time.Sleep(10 * time.Millisecond)
 		ticksChan <- t + 30
+		time.Sleep(10 * time.Millisecond)
 	}
 	termCh <- struct{}{}
 }
+
+func delayByHost(host string) int {
+	s := sha1.Sum([]byte(host))
+	return int(s[len(s)-1]) % int(60)
+}
+
+var nowTime int64
 
 func main() {
 	from := time.Date(2023, 7, 28, 3, 33, 0, 0, time.Local)
@@ -69,9 +81,16 @@ func main() {
 	ticksCh := make(chan int64)
 	downTimeMap := makeDownTimeMap()
 	inDown := false
-	nowTime := int64(0)
+	nowTime = int64(0)
 
-	postQueue := make(chan *postValue, 360)
+	postMetricsDequeueDelaySeconds := 30
+	postMetricsRetryDelaySeconds := 60
+	postMetricsRetryMax := 60
+	postMetricsBufferSize := 6 * 60
+
+	postDelaySeconds := delayByHost("AAAAAAAA") // ホストIDから生成する0〜59のやつ
+
+	postQueue := make(chan *postValue, postMetricsBufferSize)
 	termCh := make(chan struct{})
 
 	go ticks(ticksCh, from, to, termCh)
@@ -88,9 +107,9 @@ func main() {
 			}
 			if t%60 == 0 {
 				creatingValues := []int64{t}
-				postQueue <- newPostValue(creatingValues) // これは障害だろうがやる
+				fmt.Println("TOUKOU", creatingValues)
+				postQueue <- newPostValue(creatingValues) // これは障害だろうが動き続けている
 			}
-			time.Sleep(10 * time.Millisecond)
 		case v := <-postQueue:
 			origPostValues := [](*postValue){v}
 			if len(postQueue) > 0 {
@@ -102,13 +121,16 @@ func main() {
 			switch lState {
 			case loopStateFirst: // NOP
 			case loopStateQueued:
-				delaySeconds = 30 // postMetricsDequeueDelaySeconds = 30
+				delaySeconds = postMetricsDequeueDelaySeconds // postMetricsDequeueDelaySeconds = 30
 			case loopStateHadError:
-				delaySeconds = 60 // postMetricsRetryDelaySeconds = 60
+				delaySeconds = postMetricsRetryDelaySeconds // postMetricsRetryDelaySeconds = 60
 			case loopStateTerminating:
 				delaySeconds = 1 // 終了時 = 1
 			default:
-				delaySeconds = 1 // 環境により0〜59
+				elapsedSeconds := int(nowTime % int64(postDelaySeconds))
+				if postDelaySeconds > elapsedSeconds {
+					delaySeconds = postDelaySeconds - elapsedSeconds
+				} // 今だと3,6,9
 			}
 			targetTime := nowTime + int64(delaySeconds)
 
@@ -124,6 +146,7 @@ func main() {
 
 			select {
 			case t := <-ticksCh:
+				nowTime = t
 				if t >= targetTime {
 					break
 				}
@@ -137,16 +160,17 @@ func main() {
 			if err != nil {
 				if lState != loopStateTerminating {
 					lState = loopStateHadError
-					log(nowTime, "FAIL", newPostValue(postValues), len(postQueue))
+					// log(nowTime, "FAIL", newPostValue(postValues), len(postQueue))
 				}
 				go func() {
 					for _, v = range origPostValues {
 						v.retryCnt++
-						if v.retryCnt > 60 { // postMetricsRetryMax=60
+						if v.retryCnt > postMetricsRetryMax { // postMetricsRetryMax=60
 							log(nowTime, "LOST", v, len(postQueue))
 							continue
 						}
 						postQueue <- v
+						log(nowTime, "REQUEUE", v, len(postQueue))
 					}
 				}()
 				continue
