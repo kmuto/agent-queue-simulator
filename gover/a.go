@@ -107,8 +107,11 @@ func main() {
 			}
 			if t%60 == 0 {
 				creatingValues := []int64{t}
-				fmt.Println("TOUKOU", creatingValues)
-				postQueue <- newPostValue(creatingValues) // これは障害だろうが動き続けている
+				if len(postQueue) < postMetricsBufferSize { // FIXME:本番ではこれはなくてうまく処理できている。goわからん
+					postQueue <- newPostValue(creatingValues) // これは障害だろうが動き続けている
+				} else {
+					log(nowTime, "FLOOD", newPostValue(creatingValues), len(postQueue))
+				}
 			}
 		case v := <-postQueue:
 			origPostValues := [](*postValue){v}
@@ -143,10 +146,24 @@ func main() {
 			}
 
 			// FIXME: ここでnowTimeが次の時刻にいくまでdelaySecondsぶん待ちたいわけだが、これでいいのか…？
+			// 繰り返しになってだいぶ嫌め。もう1つチャネルが必要なのかな
 
 			select {
 			case t := <-ticksCh:
 				nowTime = t
+				if downTimeMap[t] {
+					inDown = true
+				} else {
+					inDown = false
+				}
+				if t%60 == 0 {
+					creatingValues := []int64{t}
+					if len(postQueue) < postMetricsBufferSize { // FIXME:これも本来いらない
+						postQueue <- newPostValue(creatingValues) // これは障害だろうが動き続けている
+					} else {
+						log(nowTime, "FLOOD", newPostValue(creatingValues), len(postQueue))
+					}
+				}
 				if t >= targetTime {
 					break
 				}
