@@ -110,6 +110,7 @@ func main() {
 				if len(postQueue) < postMetricsBufferSize { // FIXME:本番ではこれはなくてうまく処理できている。goわからん
 					postQueue <- newPostValue(creatingValues) // これは障害だろうが動き続けている
 				} else {
+					// 本当は捨てずに待機になるはず
 					log(nowTime, "FLOOD", newPostValue(creatingValues), len(postQueue))
 				}
 			}
@@ -161,6 +162,7 @@ func main() {
 					if len(postQueue) < postMetricsBufferSize { // FIXME:これも本来いらない
 						postQueue <- newPostValue(creatingValues) // これは障害だろうが動き続けている
 					} else {
+						// 本当は捨てずに待機になるはず
 						log(nowTime, "FLOOD", newPostValue(creatingValues), len(postQueue))
 					}
 				}
